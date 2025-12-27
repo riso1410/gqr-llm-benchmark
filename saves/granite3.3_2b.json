@@ -1,0 +1,28 @@
+{
+  "predict": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "You are a highly accurate text classifier. Your task is to categorize passages into one of four predefined domains. The ONLY valid categories are: 'law', 'finance', 'healthcare', 'ood'. Any passage that does not clearly belong to the domains above MUST be categorized as ood. You must respond with ONLY the category name, and nothing else. No explanations, no extra words.",
+      "fields": [
+        {
+          "prefix": "Query:",
+          "description": "${query}"
+        },
+        {
+          "prefix": "Route:",
+          "description": "${route}"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.4",
+      "cloudpickle": "3.1"
+    }
+  }
+}

@@ -27,12 +27,6 @@ class Classify(dspy.Signature):
     route: Literal["law", "finance", "healthcare", "ood"] = dspy.OutputField()
 
 
-def normalize_route(value: str | None) -> str:
-    if value in gqr.domain2label:
-        return value
-    return "ood"
-
-
 class SafePredict(dspy.Module):
     def __init__(self, signature):
         super().__init__()
@@ -46,8 +40,8 @@ class SafePredict(dspy.Module):
 
 
 def metric(gold: dspy.Example, pred: dspy.Prediction, trace=None, pred_name=None, pred_trace=None) -> bool:
-    pred_route = normalize_route(getattr(pred, "route", None))
-    gold_route = normalize_route(getattr(gold, "route", None))
+    pred_route = getattr(pred, "route", None)
+    gold_route = getattr(gold, "route", None)
     try:
         pred_label = gqr.domain2label[pred_route]
         gold_label = gqr.domain2label[gold_route]
@@ -56,10 +50,46 @@ def metric(gold: dspy.Example, pred: dspy.Prediction, trace=None, pred_name=None
     return gold_label == pred_label
 
 
+def metric_feedback(
+    gold: dspy.Example,
+    pred: dspy.Prediction,
+    trace=None,
+    pred_name=None,
+    pred_trace=None,
+) -> str:
+    pred_route = getattr(pred, "route", None)
+    gold_route = getattr(gold, "route", None)
+    if pred_route == gold_route:
+        return "Correct."
+    return f"Incorrect: predicted '{pred_route}', expected '{gold_route}'."
+
+
+class ScoreWithFeedback(float):
+    def __new__(cls, value: float, feedback: str):
+        obj = float.__new__(cls, value)
+        obj.feedback = feedback
+        return obj
+
+
+def make_gepa_metric():
+    def metric_with_feedback(
+        gold: dspy.Example,
+        pred: dspy.Prediction,
+        trace=None,
+        pred_name=None,
+        pred_trace=None,
+    ):
+        score = float(metric(gold, pred, trace, pred_name, pred_trace))
+        feedback = metric_feedback(gold, pred, trace, pred_name, pred_trace)
+        return ScoreWithFeedback(score, feedback)
+
+    return metric_with_feedback
+
+
 def score_dspy(text: str, program: Callable[..., dspy.Prediction]) -> int:
     try:
         pred = program(query=text)
-        pred_route = normalize_route(getattr(pred, "route", None))
+        pred_route = getattr(pred, "route", None)
         predicted_label = gqr.domain2label[pred_route]
     except Exception:
         predicted_label = gqr.domain2label.get("ood", 3)
