@@ -1,0 +1,57 @@
+{
+  "predict": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "augmented": true,
+        "query": "Why don't US prosecutors press for imprisonment for crime in the banking industry?\nIn [this](https://www.theguardian.com/business/2018/aug/15/rbs-bankers-joked-about-destroying-the-us-housing-market) article by *The Guardian* published two days ago they report:\n\n\n\n> \n> RBS bankers joked about destroying the US housing market after making millions by trading loans that staff described as **\"total fucking garbage\"**, according to transcripts released as part of a $4.9 billion (£3.8 billion) settlement with US prosecutors ...\n> \n> \n> The DoJ (Department of Justice) ... said the bank made **\"false and misleading representations\"** {ie they lied} to investors in order to sell more of RMBS (Residential Mortgage Backed Securities) [ie homes] ... which are forecast to result in losses of $55 billion to investors ...\n> \n> \n> The banks chief credit officer in the US referred to selling investors products backed by **\"total fucking garbage\"** loans with **\"fraud that was so rampant ... [and] random\"**.\n> \n> \n> He added that **\"the loans are all disguised to, you know, look okay kind of ... in a data file\"**.\n> \n> \n> \n\n\nSo much for the sophisticated risk assessment models of banks risk assessment departments and of rating agencies: garbage in, garbage out.\n\n\nThe article goes on to report that\n\n\n\n> \n> The DoJ said senior RBS executives **\"showed little regard for their misconduct, and internally made light of it.\"**\n> \n> \n> In one exchange as the extent of the contagion became clear, RBS's head trader recieved a call from a friend who said **\"[I'm] sure your parents never imagine[d] they'd raise a son who [would] destroy the US housing market in the richest nation in the world.\"**\n> \n> \n> \n\n\nTo which the head trader joked:\n\n\n\n> \n> **\"I take exception to the word 'destroy'. I am more comfortable with 'severely damage'**\n> \n> \n> \n\n\nA joke that affirms his guilt in this matter. One senior banker explained to a colleague:\n\n\n\n> \n> that risky loans were the result of a broken mortgage industry that meant lenders were **\"raking in the money\"** and were incentivised to make as much money as possible.\n> \n> \n> \n\n\nAs opposed to being incentivised to fix the industry.\n\n\n\n> \n> Employees who might have raised the alarm about the riskiness of such lending **\"don't give a shit because they are not getting paid\"**\n> \n> \n> The bank made **\"hundreds of millions of dollars\"** from selling RMBS the DoJ said, while disguising the risk they posed to investors.\n> \n> \n> By October 2007, as signs of stress began to show in the banking system, RBS chief credit officer wrote to his colleagues expressing his true feelings about the burgeoning volume of subprime loans in the housing market. He said that loans were bing pushed by **\"every possible ... style of scumbag ... [it was like] quasi-organised crime ... nobody seemed to care.\"**\n> \n> \n> \n\n\nThe emphasis in bold was added to dialogue in the extracts above.\n\n\nThis raises a question about how to reform and fix the banking industry. According to Chomsky, the formation of Western capitalism was in large part by due to \"radical judicial activism\". Perhaps it will take radical judicial activism to fix it. Clearly the system is broken - even the bankers themselves admit it.\n\n\nSurely one instrument at hand for the legislative profession is punishment. The bank is being punished by being fined but negligible personal responsibility is taken - as also admitted by the bankers. Notably, no names are mentioned above - only the name of the office they occupy.\n\n\nQ. Is this due to the principle of limited liability?\n\n\nA general principle in economics is higher risk is supposedly correlated with higher rewards. Yet soldiers put their lives on the line for defending a nation against attack yet are rewarded much less than bankers that are putting other peoples lives at risk.\n\n\nWhy aren't bankers punished for the very real harm they can do to an economy? The USA has the death penalty for example (the UK does not) but one need not go as far as the ultimate sanction - imprisonment is possible - ten years, twenty years or life.\n\n\nQ. Why aren't US prosecutors (and UK prosecutors for that matter) not pressing for imprisonment in such cases? Is this because there are no such laws under bankers can be so indited (notably, in the case reported on above, there is the additional complication of extradition) or that there are - but powerful vested interests prevents the actual execution of the law as it is intended? If so - how exactly are they prevented?\n\n\n**note:** {this is clarification by the poster} as opposed to [this is clarification by the reporter] of quoted text. See comments below this post.",
+        "route": "law"
+      },
+      {
+        "augmented": true,
+        "query": "How to help a financially self destructive person?",
+        "route": "finance"
+      },
+      {
+        "augmented": true,
+        "query": "1.4 million cash. What do I do?",
+        "route": "finance"
+      },
+      {
+        "augmented": true,
+        "query": "Can I sue my job employer for false promises?\nMy employer, a chain restaurant in Huntsville, Alabama, promoted me to shift leader where I ran and closed a store for 5-4 months expecting to be paid $10 per hour and was told I would be getting paid for training in the process. Turns out, I was getting paid only $7.25 an hour. I was the lowest paid in the store even amongst the employees I was overseeing.\n\n\nOnce I found out I brought it to my manager's attention as well as the area coach's attention. I had a meeting with the area coach. He verbally assured me that I would receive back pay after I completed the online serve safe course which I did and still wasn't compensated. That area coach resigned and the company says they won't give me back pay because they don't give back pay.",
+        "route": "law"
+      },
+      {
+        "query": "About 2 weeks ago, my boyfriend and I were making out (both fully clothed). I saw a dry, white line on my jeans a little while later. I touched it, trying to wipe it off. I do not remember how long after that I touched myself, but it was not immediate. Since last Saturday I have had nausea and chills in varying levels. A few days ago, I discovered small, white bumps on the inside of my vagina at the top and one larger red bump with a white top on the side. Just today, I began experiencing sharp pain in my ovaries. So, in summation, can I be pregnant?",
+        "route": "healthcare"
+      },
+      {
+        "query": "Is Amazon's offer of a $50 gift card a scam?",
+        "route": "finance"
+      }
+    ],
+    "signature": {
+      "instructions": "You are a highly accurate text classifier. Your task is to categorize passages into one of four predefined domains. The ONLY valid categories are: 'law', 'finance', 'healthcare', 'ood'. \nAny passage that does not clearly belong to the domains above MUST be categorized as ood. You must respond with ONLY the category name, and nothing else. No explanations, no extra words.",
+      "fields": [
+        {
+          "prefix": "Query:",
+          "description": "${query}"
+        },
+        {
+          "prefix": "Route:",
+          "description": "${route}"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.4",
+      "cloudpickle": "3.1"
+    }
+  }
+}

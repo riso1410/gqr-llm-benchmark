@@ -1,0 +1,53 @@
+{
+  "predict": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "query": "What is the easiest way to back-test index funds and ETFs?",
+        "route": "finance"
+      },
+      {
+        "query": "What is the difference between the Supreme Judicial Court of Massachusetts and the Supreme Judicial Court for Suffolk County?\nIt is my understanding that the Supreme Judicial Court of Massachusetts is the highest state court in the state of Massachusetts. However, I have also heard reference to the Supreme Judicial Court for Suffolk County, which I gather is a different judicial body from the Supreme Judicial Court of Massachusetts.\n\n\nI found [this page on the state government website about the SJC Clerk for Suffolk County](https://www.mass.gov/orgs/sjc-clerks-office-for-the-county-of-suffolk), but I'm not sure if that's the same thing either, and even if it is, the page does not describe the *function* of the SJC Clerk for Suffolk County, only the opening hours, COVID-19 restrictions, and contact information.\n\n\nSo what *is* the Supreme Judicial Court for Suffolk County, and how is it affiliated (if at all) to the Supreme Judicial Court of Massachusetts?",
+        "route": "law"
+      },
+      {
+        "query": "Mutual fund capital gain on my 1099-DIV : no cost basis?",
+        "route": "finance"
+      },
+      {
+        "query": "Shares; are they really only for the rich/investors?",
+        "route": "finance"
+      },
+      {
+        "query": "What should police do in case a stolen item is evidently in suspect's house\n`A` person (woman) says that `B` person (man) had stolen an item (laptop), because she has seen `B` doing that, being few meters away from the location, watching how he has done it (watching her items which were visually identifiable easily with the unique colors and stickers on her laptop). Then also GPS signal was coming from the `B`'s home, and when she called the messenger, the ringtone come from `B`'s home (device was still connected to the WIFI).\n\n\nWhen she called a police, they couldnt do anything and said that they have wait for a court order (search warrant) and even it was dubious if they would get search warrant at all. After weeks, the search warrant was issued, but no need to guess any joke out of it, there was already no trace of existence of the item in thief's home.\n\n\nSimilar situations happened quite many times around me, people being robbed quickly, and police being unable to do anything, and all such cases closed without any success.\n\n\n1. Des the police act correctly?\n2. What should the owner do in such a case, when the owner still knows the item's location exactly and immediate action is needed, but the police is not helping?\n\n\n\n\n---\n\n\n(p.s. Maybe jurisdiction doesn't much matter here, let's consider a typical civil country).",
+        "route": "law"
+      },
+      {
+        "query": "i think i have GAD. I get hot flashes, my heartbeat is fluttering, i have a feeling like i might die of a heart attack or a anyrsym and it occurs just about everyday at night. i feel weak, and dizzy. my chest is tight and im nervous. ive had alot of stress what do you think?",
+        "route": "healthcare"
+      }
+    ],
+    "signature": {
+      "instructions": "You are a highly accurate text classifier. Your task is to categorize passages into one of four predefined domains. The ONLY valid categories are: 'law', 'finance', 'healthcare', 'ood'. \nAny passage that does not clearly belong to the domains above MUST be categorized as ood. You must respond with ONLY the category name, and nothing else. No explanations, no extra words.",
+      "fields": [
+        {
+          "prefix": "Query:",
+          "description": "${query}"
+        },
+        {
+          "prefix": "Route:",
+          "description": "${route}"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.4",
+      "cloudpickle": "3.1"
+    }
+  }
+}
