@@ -25,19 +25,18 @@ logging.getLogger("dspy.optimizers.bootstrap_fewshot").setLevel(logging.WARNING)
 # config
 
 MODELS = [
-    "google/gemma-4-26B-A4B-it",
     "google/gemma-4-E4B-it",
     "Qwen/Qwen3.5-9B",
     "Qwen/Qwen3-14B",
     "microsoft/phi-4",
     "ibm-granite/granite-4.0-tiny-preview",
     "mistralai/Mistral-7B-Instruct-v0.3",
-    "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
 ]
 
 STRATEGIES = ["baseline", "dspy", "gepa", "fewshot"]
 
-MAX_NEW_TOKENS  = 3
+MAX_NEW_TOKENS_BASELINE = 3
+MAX_NEW_TOKENS_DSPY     = 50
 MAX_INPUT_LEN   = 2048
 GEPA_TRAIN_SIZE = 5000
 GEPA_VAL_SIZE   = 1000
@@ -82,8 +81,13 @@ class SafePredict(dspy.Module):
         super().__init__()
         self.predict = dspy.Predict(Classify)
     def forward(self, **kw):
-        try: return self.predict(**kw)
-        except Exception: return dspy.Prediction(route="ood")
+        try:
+            result = self.predict(**kw)
+            #log.info("SafePredict OK: route=%r", result.route)
+            return result
+        except Exception as e:
+            #log.info("SafePredict FAIL: %s", e)
+            return dspy.Prediction(route="ood")
 
 class ScoreWithFeedback(float):
     """GEPA needs a float that also carries a .feedback string."""
@@ -92,11 +96,16 @@ class ScoreWithFeedback(float):
         obj.feedback = feedback
         return obj
 
-def dspy_metric(gold, pred, **_):
-    try: return gqr.domain2label[pred.route] == gqr.domain2label[gold.route]
-    except Exception: return False
+def dspy_metric(gold, pred, trace=None):
+    try:
+        result = gqr.domain2label[pred.route] == gqr.domain2label[gold.route]
+        log.info("METRIC gold=%r pred=%r → %s", gold.route, pred.route, result)
+        return result
+    except Exception as e:
+        log.info("METRIC gold=%r pred=%r → FAIL: %s", getattr(gold, 'route', None), getattr(pred, 'route', None), e)
+        return False
 
-def gepa_metric(gold, pred, **_):
+def gepa_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
     correct = dspy_metric(gold, pred)
     if correct:
         return ScoreWithFeedback(1.0, "Correct.")
@@ -104,8 +113,13 @@ def gepa_metric(gold, pred, **_):
         f"Incorrect: predicted '{getattr(pred, 'route', None)}', expected '{gold.route}'.")
 
 def predict_dspy(text, program):
-    try: return gqr.domain2label[program(query=text).route]
-    except Exception: return gqr.domain2label["ood"]
+    try:
+        route = program(query=text).route
+        #log.info("PREDICT route=%r", route)
+        return gqr.domain2label[route]
+    except Exception as e:
+        #log.info("PREDICT FAIL: %s", e)
+        return gqr.domain2label["ood"]
 
 def build_examples(data):
     return [
@@ -123,12 +137,7 @@ def load_model(name):
     log.info("Loading %s", name)
     cd = _cache(name)
     tok = AutoTokenizer.from_pretrained(name, trust_remote_code=True, cache_dir=cd)
-    if "32B" in name or "32b" in name:
-        mdl = AutoModelForCausalLM.from_pretrained(
-            name, load_in_4bit=True, device_map="auto", trust_remote_code=True, cache_dir=cd)
-    else:
-        mdl = AutoModelForCausalLM.from_pretrained(
-            name, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True, cache_dir=cd)
+    mdl = AutoModelForCausalLM.from_pretrained(name, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True, cache_dir=cd)
     mdl.eval()
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
@@ -139,9 +148,57 @@ def free_gpu(*objs):
     gc.collect()
     torch.cuda.empty_cache()
 
-def make_dspy_lm(name):
-    return dspy.LM(f"transformers/{name}", cache=False,
-        launch_kwargs={"cache_dir": str(_cache(name)), "device_map": "auto", "torch_dtype": torch.bfloat16})
+class HFLocalLM(dspy.LM):
+    """Wrap an already-loaded HF model+tokenizer so DSPy uses it directly."""
+
+    def __init__(self, name, hf_model, hf_tok):
+        self.model = name
+        self.model_type = "chat"
+        self.cache = False
+        self.callbacks = []
+        self.history = []
+        self.kwargs = {"temperature": 0.0, "max_tokens": MAX_NEW_TOKENS_DSPY}
+        self.num_retries = 0
+        self.provider = None
+        self.finetuning_model = None
+        self.launch_kwargs = {}
+        self.train_kwargs = {}
+        self.use_developer_role = False
+        self._warned_zero_temp_rollout = False
+        self._hf_model = hf_model
+        self._hf_tok = hf_tok
+
+    def forward(self, prompt=None, messages=None, **kwargs):
+        from types import SimpleNamespace
+        messages = messages or [{"role": "user", "content": prompt}]
+        if hasattr(self._hf_tok, "apply_chat_template"):
+            text = self._hf_tok.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True,
+                enable_thinking=False)
+        else:
+            text = "\n".join(m["content"] for m in messages)
+        ids = self._hf_tok(text, return_tensors="pt", truncation=True,
+                           max_length=MAX_INPUT_LEN).to(self._hf_model.device)
+        with torch.no_grad():
+            out = self._hf_model.generate(
+                **ids, max_new_tokens=MAX_NEW_TOKENS_DSPY, do_sample=False,
+                pad_token_id=self._hf_tok.pad_token_id)
+        ans = self._hf_tok.decode(
+            out[0, ids["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+        n_prompt = ids["input_ids"].shape[1]
+        n_completion = out.shape[1] - n_prompt
+        choice = SimpleNamespace(
+            message=SimpleNamespace(content=ans, role="assistant", tool_calls=None),
+            finish_reason="stop")
+        usage = {"prompt_tokens": n_prompt, "completion_tokens": n_completion,
+                 "total_tokens": n_prompt + n_completion}
+        return SimpleNamespace(choices=[choice], model=self.model, usage=usage)
+
+    def launch(self): pass
+    def kill(self): pass
+
+def make_dspy_lm(name, hf_model, hf_tok):
+    return HFLocalLM(name, hf_model, hf_tok)
 
 # -----------------------------------------------------------------------------
 # scoring: returns (score_fn, latencies_list)
@@ -159,7 +216,7 @@ def scorer_baseline(model, tok):
         ids = tok(prompt, return_tensors="pt", truncation=True, max_length=MAX_INPUT_LEN).to(model.device)
         t0 = time.perf_counter()
         with torch.no_grad():
-            out = model.generate(**ids, max_new_tokens=MAX_NEW_TOKENS,
+            out = model.generate(**ids, max_new_tokens=MAX_NEW_TOKENS_BASELINE,
                                  do_sample=False, pad_token_id=tok.pad_token_id)
         lats.append(time.perf_counter() - t0)
         raw = tok.decode(out[0, ids["input_ids"].shape[1]:], skip_special_tokens=True).strip().lower()
@@ -192,9 +249,12 @@ def eval_model(name, strategy, score_fn, lats):
         ood_data = ood_data.head(DRY_RUN_N).copy()
     n = len(id_data) + len(ood_data)
 
-    with tqdm(total=n, desc=f"{name} [{strategy}]") as bar:
-        id_data["pred"]  = [(bar.update(1) or score_fn(t)) for t in id_data["text"].values]
-        ood_data["pred"] = [(bar.update(1) or score_fn(t)) for t in ood_data["text"].values]
+    preds = []
+    texts = list(id_data["text"].values) + list(ood_data["text"].values)
+    for t in tqdm(texts, desc=f"{name} [{strategy}]"):
+        preds.append(score_fn(t))
+    id_data["pred"]  = preds[:len(id_data)]
+    ood_data["pred"] = preds[len(id_data):]
 
     id_acc = evaluate(predictions=id_data["pred"], ground_truth=id_data["label"])["accuracy"]
 
@@ -285,7 +345,7 @@ def main():
 
     # output path encodes hyperparams
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    hp = (f"tok{MAX_NEW_TOKENS}_ctx{MAX_INPUT_LEN}"
+    hp = (f"tok{MAX_NEW_TOKENS_BASELINE}-{MAX_NEW_TOKENS_DSPY}_ctx{MAX_INPUT_LEN}"
           f"_gepa{GEPA_TRAIN_SIZE}-{GEPA_VAL_SIZE}-{GEPA_AUTO}-s{GEPA_SEED}"
           f"_fs{FS_TRAIN_SIZE}-d{FS_MAX_DEMOS}-c{FS_CANDIDATES}")
     csv_path = RESULTS_DIR / f"hf_{'+'.join(STRATEGIES)}_{hp}_{ts}.csv"
@@ -305,49 +365,68 @@ def main():
         tag = name.replace("/", "_")
         print(f"\n{'='*60}\n  {name}\n{'='*60}")
 
+        mdl = tok = None
+
+        def _skip(strategy, err):
+            log.error("SKIP %s [%s]: %s", name, strategy, err)
+            rows.append(dict(model=name, strategy=strategy, avg_latency=None,
+                             id_acc=None, ood_acc=None, gqr_score=None, dataset_acc=None))
+
+        # load model once, reuse for all strategies
+        try:
+            mdl, tok = load_model(name)
+        except Exception as e:
+            for s in STRATEGIES:
+                _skip(s, e)
+            pd.DataFrame(rows).to_csv(csv_path, index=False)
+            continue
+
         try:
             # --- baseline: raw HF inference ---
             if "baseline" in STRATEGIES:
-                mdl, tok = load_model(name)
-                fn, lats = scorer_baseline(mdl, tok)
-                rows.append(eval_model(name, "baseline", fn, lats))
-                free_gpu(mdl, tok)
+                try:
+                    fn, lats = scorer_baseline(mdl, tok)
+                    rows.append(eval_model(name, "baseline", fn, lats))
+                except Exception as e:
+                    _skip("baseline", e)
 
-            # --- dspy / gepa / fewshot: all share one dspy.LM ---
+            # --- dspy / gepa / fewshot: all share one HFLocalLM ---
             dspy_strats = [s for s in ("dspy","gepa","fewshot") if s in STRATEGIES]
             if dspy_strats:
-                lm = make_dspy_lm(name)
+                lm = make_dspy_lm(name, mdl, tok)
                 dspy.configure(lm=lm)
 
                 if "dspy" in STRATEGIES:
-                    fn, lats = scorer_dspy()
-                    rows.append(eval_model(name, "dspy", fn, lats))
+                    try:
+                        fn, lats = scorer_dspy()
+                        rows.append(eval_model(name, "dspy", fn, lats))
+                    except Exception as e:
+                        _skip("dspy", e)
 
                 if "gepa" in STRATEGIES:
-                    student = SafePredict()
-                    opt = dspy.GEPA(metric=gepa_metric, reflection_lm=lm, auto=GEPA_AUTO, seed=GEPA_SEED)
-                    prog = opt.compile(student, trainset=trainset_gepa, valset=valset_gepa)
-                    prog.save(SAVES_DIR / f"gepa_{tag}.json")
-                    fn, lats = scorer_dspy(program=prog)
-                    rows.append(eval_model(name, "gepa", fn, lats))
+                    try:
+                        student = SafePredict()
+                        opt = dspy.GEPA(metric=gepa_metric, reflection_lm=lm, auto=GEPA_AUTO, seed=GEPA_SEED)
+                        prog = opt.compile(student, trainset=trainset_gepa, valset=valset_gepa)
+                        prog.save(SAVES_DIR / f"gepa_{tag}.json")
+                        fn, lats = scorer_dspy(program=prog)
+                        rows.append(eval_model(name, "gepa", fn, lats))
+                    except Exception as e:
+                        _skip("gepa", e)
 
                 if "fewshot" in STRATEGIES:
-                    student = SafePredict()
-                    opt = dspy.BootstrapFewShotWithRandomSearch(
-                        max_labeled_demos=FS_MAX_DEMOS, num_candidate_programs=FS_CANDIDATES, metric=dspy_metric)
-                    prog = opt.compile(student, trainset=trainset_fs)
-                    prog.save(SAVES_DIR / f"fewshot_{tag}.json")
-                    fn, lats = scorer_dspy(program=prog)
-                    rows.append(eval_model(name, "fewshot", fn, lats))
-
-                free_gpu(lm)
-
-        except Exception as e:
-            log.error("SKIP %s: %s", name, e)
-            for s in STRATEGIES:
-                if not any(r["model"]==name and r["strategy"]==s for r in rows):
-                    rows.append(dict(model=name, strategy=s, avg_latency=None,
-                                     id_acc=None, ood_acc=None, gqr_score=None, dataset_acc=None))
+                    try:
+                        student = SafePredict()
+                        opt = dspy.BootstrapFewShotWithRandomSearch(
+                            max_labeled_demos=FS_MAX_DEMOS, num_candidate_programs=FS_CANDIDATES, metric=dspy_metric)
+                        prog = opt.compile(student, trainset=trainset_fs)
+                        prog.save(SAVES_DIR / f"fewshot_{tag}.json")
+                        fn, lats = scorer_dspy(program=prog)
+                        rows.append(eval_model(name, "fewshot", fn, lats))
+                    except Exception as e:
+                        _skip("fewshot", e)
+        finally:
+            free_gpu(mdl, tok); mdl = tok = None
 
         # checkpoint after every model
         pd.DataFrame(rows).to_csv(csv_path, index=False)

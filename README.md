@@ -10,7 +10,6 @@ Classify text passages into one of four domains: **law**, **finance**, **healthc
 
 | Model | Notes |
 |---|---|
-| `google/gemma-4-26B-A4B-it` | MoE, active 4B |
 | `google/gemma-4-E4B-it` | Dense 4B |
 | `Qwen/Qwen3.5-9B` | |
 | `Qwen/Qwen3-14B` | |
