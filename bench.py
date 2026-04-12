@@ -25,15 +25,14 @@ logging.getLogger("dspy.optimizers.bootstrap_fewshot").setLevel(logging.WARNING)
 # config
 
 MODELS = [
-    "google/gemma-4-E4B-it",
+    "google/gemma-4-E2B-it",
     "Qwen/Qwen3.5-9B",
-    "Qwen/Qwen3-14B",
     "microsoft/phi-4",
     "ibm-granite/granite-4.0-tiny-preview",
     "mistralai/Mistral-7B-Instruct-v0.3",
 ]
 
-STRATEGIES = ["baseline", "dspy", "gepa", "fewshot"]
+STRATEGIES = ["baseline"] # "baseline", "dspy", "gepa", "fewshot"
 
 MAX_NEW_TOKENS_BASELINE = 3
 MAX_NEW_TOKENS_DSPY     = 50
@@ -143,8 +142,7 @@ def load_model(name):
         tok.pad_token = tok.eos_token
     return mdl, tok
 
-def free_gpu(*objs):
-    for o in objs: del o
+def free_gpu():
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -179,10 +177,14 @@ class HFLocalLM(dspy.LM):
             text = "\n".join(m["content"] for m in messages)
         ids = self._hf_tok(text, return_tensors="pt", truncation=True,
                            max_length=MAX_INPUT_LEN).to(self._hf_model.device)
-        with torch.no_grad():
-            out = self._hf_model.generate(
-                **ids, max_new_tokens=MAX_NEW_TOKENS_DSPY, do_sample=False,
-                pad_token_id=self._hf_tok.pad_token_id)
+        try:
+            with torch.no_grad():
+                out = self._hf_model.generate(
+                    **ids, max_new_tokens=MAX_NEW_TOKENS_DSPY, do_sample=False,
+                    pad_token_id=self._hf_tok.pad_token_id)
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            out = ids["input_ids"]  # empty generation
         ans = self._hf_tok.decode(
             out[0, ids["input_ids"].shape[1]:], skip_special_tokens=True).strip()
         n_prompt = ids["input_ids"].shape[1]
@@ -215,9 +217,14 @@ def scorer_baseline(model, tok):
             prompt = f"{SYSTEM_PROMPT}\n\n{USER_PROMPT.format(query=text)}"
         ids = tok(prompt, return_tensors="pt", truncation=True, max_length=MAX_INPUT_LEN).to(model.device)
         t0 = time.perf_counter()
-        with torch.no_grad():
-            out = model.generate(**ids, max_new_tokens=MAX_NEW_TOKENS_BASELINE,
-                                 do_sample=False, pad_token_id=tok.pad_token_id)
+        try:
+            with torch.no_grad():
+                out = model.generate(**ids, max_new_tokens=MAX_NEW_TOKENS_BASELINE,
+                                     do_sample=False, pad_token_id=tok.pad_token_id)
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            lats.append(time.perf_counter() - t0)
+            return gqr.domain2label["ood"]
         lats.append(time.perf_counter() - t0)
         raw = tok.decode(out[0, ids["input_ids"].shape[1]:], skip_special_tokens=True).strip().lower()
         return gqr.domain2label.get(raw, gqr.domain2label["ood"])
@@ -365,7 +372,7 @@ def main():
         tag = name.replace("/", "_")
         print(f"\n{'='*60}\n  {name}\n{'='*60}")
 
-        mdl = tok = None
+        mdl = tok = lm = None
 
         def _skip(strategy, err):
             log.error("SKIP %s [%s]: %s", name, strategy, err)
@@ -426,7 +433,13 @@ def main():
                     except Exception as e:
                         _skip("fewshot", e)
         finally:
-            free_gpu(mdl, tok); mdl = tok = None
+            if lm is not None:
+                lm._hf_model = None
+                lm._hf_tok = None
+            dspy.configure(lm=None)
+            del mdl, tok, lm
+            mdl = tok = lm = None
+            free_gpu()
 
         # checkpoint after every model
         pd.DataFrame(rows).to_csv(csv_path, index=False)
