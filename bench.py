@@ -1,6 +1,7 @@
 import argparse
 import gc
 import logging
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -27,18 +28,19 @@ logging.getLogger("dspy.optimizers.bootstrap_fewshot").setLevel(logging.WARNING)
 MODELS = [
     "google/gemma-4-E2B-it",
     "Qwen/Qwen3.5-9B",
-    "microsoft/phi-4",
     "ibm-granite/granite-4.0-tiny-preview",
     "mistralai/Mistral-7B-Instruct-v0.3",
 ]
 
-STRATEGIES = ["baseline"] # "baseline", "dspy", "gepa", "fewshot"
+STRATEGIES = ["dspy", "fewshot"] # "baseline", "dspy", "gepa", "fewshot"
+
+GEPA_TEACHER_MODEL = "gpt-5-fiit"
 
 MAX_NEW_TOKENS_BASELINE = 3
-MAX_NEW_TOKENS_DSPY     = 50
+MAX_NEW_TOKENS_DSPY     = 15
 MAX_INPUT_LEN   = 2048
-GEPA_TRAIN_SIZE = 5000
-GEPA_VAL_SIZE   = 1000
+GEPA_TRAIN_SIZE = 500
+GEPA_VAL_SIZE   = 300
 GEPA_AUTO       = "light"
 GEPA_SEED       = 22
 FS_TRAIN_SIZE   = 300
@@ -98,10 +100,10 @@ class ScoreWithFeedback(float):
 def dspy_metric(gold, pred, trace=None):
     try:
         result = gqr.domain2label[pred.route] == gqr.domain2label[gold.route]
-        log.info("METRIC gold=%r pred=%r → %s", gold.route, pred.route, result)
+        #log.info("METRIC gold=%r pred=%r → %s", gold.route, pred.route, result)
         return result
     except Exception as e:
-        log.info("METRIC gold=%r pred=%r → FAIL: %s", getattr(gold, 'route', None), getattr(pred, 'route', None), e)
+        #log.info("METRIC gold=%r pred=%r → FAIL: %s", getattr(gold, 'route', None), getattr(pred, 'route', None), e)
         return False
 
 def gepa_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
@@ -147,8 +149,6 @@ def free_gpu():
     torch.cuda.empty_cache()
 
 class HFLocalLM(dspy.LM):
-    """Wrap an already-loaded HF model+tokenizer so DSPy uses it directly."""
-
     def __init__(self, name, hf_model, hf_tok):
         self.model = name
         self.model_type = "chat"
@@ -202,6 +202,20 @@ class HFLocalLM(dspy.LM):
 def make_dspy_lm(name, hf_model, hf_tok):
     return HFLocalLM(name, hf_model, hf_tok)
 
+def make_teacher_lm():
+    """Create an API-based LM for GEPA's reflection_lm (teacher)."""
+    api_key = os.environ.get("API_KEY")
+    api_base = os.environ.get("API_BASE")
+    if not api_key or not api_base:
+        raise RuntimeError("API_KEY and API_BASE env vars are required for GEPA teacher")
+    return dspy.LM(
+        model=f"openai/{GEPA_TEACHER_MODEL}",
+        api_key=api_key,
+        api_base=api_base,
+        temperature=1.0,
+        max_tokens=16000,
+    )
+
 # -----------------------------------------------------------------------------
 # scoring: returns (score_fn, latencies_list)
 
@@ -248,7 +262,6 @@ DRY_RUN = False  # set via --dry-run flag
 DRY_RUN_N = 5    # samples per split in dry-run mode
 
 def eval_model(name, strategy, score_fn, lats):
-    """Run score_fn on ID + OOD splits, return a results dict."""
     id_data  = gqr.load_id_test_dataset()
     ood_data = gqr.load_ood_test_dataset()
     if DRY_RUN:
@@ -412,8 +425,9 @@ def main():
 
                 if "gepa" in STRATEGIES:
                     try:
+                        teacher_lm = make_teacher_lm()
                         student = SafePredict()
-                        opt = dspy.GEPA(metric=gepa_metric, reflection_lm=lm, auto=GEPA_AUTO, seed=GEPA_SEED)
+                        opt = dspy.GEPA(metric=gepa_metric, reflection_lm=teacher_lm, auto=GEPA_AUTO, seed=GEPA_SEED)
                         prog = opt.compile(student, trainset=trainset_gepa, valset=valset_gepa)
                         prog.save(SAVES_DIR / f"gepa_{tag}.json")
                         fn, lats = scorer_dspy(program=prog)

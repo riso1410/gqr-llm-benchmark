@@ -1,0 +1,57 @@
+{
+  "predict": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "augmented": true,
+        "query": "Hi iI have been diagnoed with thymic cancer, I do not like to take the drugs for pain that are prescribed,as they have side effects that are harsh.So instead i have been taking ibuprophen .for abot 4 months ,as dosage recommended, I have beenexperiencing respitory issues lately and wonder if this is the cause.I have been doing radiation and chemo treaments ,it has shown improvement in all aspects except for my breathing .I read an article on cleveland clinic facebook this mourning that said this might be why,,,...Thoughts  on this please?                                                                                                                                                                              ths   ccsc",
+        "route": "healthcare"
+      },
+      {
+        "augmented": true,
+        "query": "How speedy must a trial be to for the purposes of article 6, ECHR?\nArticle 6 of the European Convention on Human Rights requires criminal trials to be fair and speedy. What is the time threshold for a trial to transpire is for it to be deemed \"speedy\" or insufficiently so as to be violative?",
+        "route": "law"
+      },
+      {
+        "augmented": true,
+        "query": "a pin pricking feeling on my right side..just above the thigh where i was given a painkiller injection two weeks back. i was hospitalised for kidney stone and was on antibiotics till last sunday. This pricking started on tuesday. i was afraid it may be an abscess so started antibiotics on friday again. today is the third day of that but pricking feeling not gone. what could it be?",
+        "route": "healthcare"
+      },
+      {
+        "augmented": true,
+        "query": "1.4 million cash. What do I do?",
+        "route": "finance"
+      },
+      {
+        "query": "What does the working capital turnover ratio measure?",
+        "route": "finance"
+      },
+      {
+        "query": "A friend wants to use my account for a wire transfer. Is this a scam or is it legitimate?",
+        "route": "finance"
+      }
+    ],
+    "signature": {
+      "instructions": "Classify a passage into exactly one of: law, finance, healthcare, ood.",
+      "fields": [
+        {
+          "prefix": "Query:",
+          "description": "${query}"
+        },
+        {
+          "prefix": "Route:",
+          "description": "${route}"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.4",
+      "cloudpickle": "3.1"
+    }
+  }
+}
