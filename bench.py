@@ -1,5 +1,6 @@
 import argparse
 import gc
+import json
 import logging
 import os
 import time
@@ -16,6 +17,12 @@ import torch
 from gqr.core.evaluator import Evaluator, evaluate, evaluate_by_dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from dotenv import load_dotenv
+
+load_dotenv()
+
+API_KEY = os.environ["API_KEY"]                                 
+API_BASE = os.environ["API_BASE"]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -26,15 +33,15 @@ logging.getLogger("dspy.optimizers.bootstrap_fewshot").setLevel(logging.WARNING)
 # config
 
 MODELS = [
-    "google/gemma-4-E2B-it",
-    "Qwen/Qwen3.5-9B",
+    #"google/gemma-4-E2B-it",
+    #"Qwen/Qwen3.5-9B",
     "ibm-granite/granite-4.0-tiny-preview",
     "mistralai/Mistral-7B-Instruct-v0.3",
 ]
 
-STRATEGIES = ["dspy", "fewshot"] # "baseline", "dspy", "gepa", "fewshot"
+STRATEGIES = ["dspy", "gepa", "fewshot"] # "baseline", "dspy", "gepa", "fewshot"
 
-GEPA_TEACHER_MODEL = "gpt-5-fiit"
+GEPA_TEACHER_MODEL = "gpt-5.4-fiit"
 
 MAX_NEW_TOKENS_BASELINE = 3
 MAX_NEW_TOKENS_DSPY     = 15
@@ -109,9 +116,14 @@ def dspy_metric(gold, pred, trace=None):
 def gepa_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
     correct = dspy_metric(gold, pred)
     if correct:
-        return ScoreWithFeedback(1.0, "Correct.")
-    return ScoreWithFeedback(0.0,
-        f"Incorrect: predicted '{getattr(pred, 'route', None)}', expected '{gold.route}'.")
+        fb = "Correct."
+        log.info("GEPA METRIC gold=%r pred=%r → 1.0 | %s",
+                 getattr(gold, "route", None), getattr(pred, "route", None), fb)
+        return ScoreWithFeedback(1.0, fb)
+    fb = f"Incorrect: predicted '{getattr(pred, 'route', None)}', expected '{gold.route}'."
+    log.info("GEPA METRIC gold=%r pred=%r → 0.0 | %s",
+             getattr(gold, "route", None), getattr(pred, "route", None), fb)
+    return ScoreWithFeedback(0.0, fb)
 
 def predict_dspy(text, program):
     try:
@@ -206,8 +218,10 @@ def make_teacher_lm():
     """Create an API-based LM for GEPA's reflection_lm (teacher)."""
     api_key = os.environ.get("API_KEY")
     api_base = os.environ.get("API_BASE")
+    log.info("TEACHER env API_KEY=%s API_BASE=%s", bool(api_key), api_base)
     if not api_key or not api_base:
         raise RuntimeError("API_KEY and API_BASE env vars are required for GEPA teacher")
+    log.info("TEACHER creating LM model=openai/%s", GEPA_TEACHER_MODEL)
     return dspy.LM(
         model=f"openai/{GEPA_TEACHER_MODEL}",
         api_key=api_key,
@@ -363,12 +377,27 @@ def main():
     RESULTS_DIR.mkdir(exist_ok=True)
     SAVES_DIR.mkdir(exist_ok=True)
 
-    # output path encodes hyperparams
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    hp = (f"tok{MAX_NEW_TOKENS_BASELINE}-{MAX_NEW_TOKENS_DSPY}_ctx{MAX_INPUT_LEN}"
-          f"_gepa{GEPA_TRAIN_SIZE}-{GEPA_VAL_SIZE}-{GEPA_AUTO}-s{GEPA_SEED}"
-          f"_fs{FS_TRAIN_SIZE}-d{FS_MAX_DEMOS}-c{FS_CANDIDATES}")
-    csv_path = RESULTS_DIR / f"hf_{'+'.join(STRATEGIES)}_{hp}_{ts}.csv"
+    results_csv = RESULTS_DIR / "results.csv"
+    hyperparameters = json.dumps({
+        "max_new_tokens_baseline": MAX_NEW_TOKENS_BASELINE,
+        "max_new_tokens_dspy": MAX_NEW_TOKENS_DSPY,
+        "max_input_len": MAX_INPUT_LEN,
+        "gepa_train_size": GEPA_TRAIN_SIZE,
+        "gepa_val_size": GEPA_VAL_SIZE,
+        "gepa_auto": GEPA_AUTO,
+        "gepa_seed": GEPA_SEED,
+        "fs_train_size": FS_TRAIN_SIZE,
+        "fs_max_demos": FS_MAX_DEMOS,
+        "fs_candidates": FS_CANDIDATES,
+    })
+
+    def record(row):
+        rows.append(row)
+        row_out = {"timestamp": ts, **row, "hyperparameters": hyperparameters}
+        pd.DataFrame([row_out]).to_csv(
+            results_csv, mode="a", index=False,
+            header=not results_csv.exists())
 
     # preload training data once
     train_data, eval_data = gqr.load_train_dataset()
@@ -389,8 +418,8 @@ def main():
 
         def _skip(strategy, err):
             log.error("SKIP %s [%s]: %s", name, strategy, err)
-            rows.append(dict(model=name, strategy=strategy, avg_latency=None,
-                             id_acc=None, ood_acc=None, gqr_score=None, dataset_acc=None))
+            record(dict(model=name, strategy=strategy, avg_latency=None,
+                        id_acc=None, ood_acc=None, gqr_score=None, dataset_acc=None))
 
         # load model once, reuse for all strategies
         try:
@@ -398,7 +427,6 @@ def main():
         except Exception as e:
             for s in STRATEGIES:
                 _skip(s, e)
-            pd.DataFrame(rows).to_csv(csv_path, index=False)
             continue
 
         try:
@@ -406,7 +434,7 @@ def main():
             if "baseline" in STRATEGIES:
                 try:
                     fn, lats = scorer_baseline(mdl, tok)
-                    rows.append(eval_model(name, "baseline", fn, lats))
+                    record(eval_model(name, "baseline", fn, lats))
                 except Exception as e:
                     _skip("baseline", e)
 
@@ -419,7 +447,7 @@ def main():
                 if "dspy" in STRATEGIES:
                     try:
                         fn, lats = scorer_dspy()
-                        rows.append(eval_model(name, "dspy", fn, lats))
+                        record(eval_model(name, "dspy", fn, lats))
                     except Exception as e:
                         _skip("dspy", e)
 
@@ -431,7 +459,7 @@ def main():
                         prog = opt.compile(student, trainset=trainset_gepa, valset=valset_gepa)
                         prog.save(SAVES_DIR / f"gepa_{tag}.json")
                         fn, lats = scorer_dspy(program=prog)
-                        rows.append(eval_model(name, "gepa", fn, lats))
+                        record(eval_model(name, "gepa", fn, lats))
                     except Exception as e:
                         _skip("gepa", e)
 
@@ -443,7 +471,7 @@ def main():
                         prog = opt.compile(student, trainset=trainset_fs)
                         prog.save(SAVES_DIR / f"fewshot_{tag}.json")
                         fn, lats = scorer_dspy(program=prog)
-                        rows.append(eval_model(name, "fewshot", fn, lats))
+                        record(eval_model(name, "fewshot", fn, lats))
                     except Exception as e:
                         _skip("fewshot", e)
         finally:
@@ -455,13 +483,9 @@ def main():
             mdl = tok = lm = None
             free_gpu()
 
-        # checkpoint after every model
-        pd.DataFrame(rows).to_csv(csv_path, index=False)
-
     # final summary + plots
     df = pd.DataFrame(rows)
-    df.to_csv(csv_path, index=False)
-    log.info("Results → %s", csv_path)
+    log.info("Appended → %s", results_csv)
 
     valid = df.dropna(subset=["gqr_score"])
     if not valid.empty:
