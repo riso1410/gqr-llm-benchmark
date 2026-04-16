@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 import dspy
 import gqr
 import matplotlib.pyplot as plt
@@ -26,31 +28,29 @@ API_BASE = os.environ["API_BASE"]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
-logging.getLogger("dspy.teleprompt.gepa.gepa").setLevel(logging.WARNING)
-logging.getLogger("dspy.optimizers.bootstrap_fewshot").setLevel(logging.WARNING)
 
 # -----------------------------------------------------------------------------
 # config
 
 MODELS = [
-    #"google/gemma-4-E2B-it",
+    #"google/gemma-4-E2B-it", 
     #"Qwen/Qwen3.5-9B",
-    "ibm-granite/granite-4.0-tiny-preview",
-    "mistralai/Mistral-7B-Instruct-v0.3",
+    #"ibm-granite/granite-4.0-tiny-preview", 
+    #"mistralai/Mistral-7B-Instruct-v0.3",
+    "Qwen/Qwen3.5-4B",
 ]
 
-STRATEGIES = ["dspy", "gepa", "fewshot"] # "baseline", "dspy", "gepa", "fewshot"
+STRATEGIES = ["baseline", "dspy", "gepa", "fewshot"] # "baseline", "dspy", "gepa", "fewshot"
 
 GEPA_TEACHER_MODEL = "gpt-5.4-fiit"
 
-MAX_NEW_TOKENS_BASELINE = 3
-MAX_NEW_TOKENS_DSPY     = 15
+MAX_NEW_TOKENS_BASELINE = 1024
 MAX_INPUT_LEN   = 2048
-GEPA_TRAIN_SIZE = 500
-GEPA_VAL_SIZE   = 300
+GEPA_TRAIN_SIZE = 100
+GEPA_VAL_SIZE   = 30
 GEPA_AUTO       = "light"
 GEPA_SEED       = 22
-FS_TRAIN_SIZE   = 300
+FS_TRAIN_SIZE   = 30
 FS_MAX_DEMOS    = 6
 FS_CANDIDATES   = 4
 
@@ -80,29 +80,40 @@ COLORS = {"baseline": "#4c78a8", "dspy": "#e45756", "gepa": "#54a24b", "fewshot"
 # dspy plumbing
 
 class Classify(dspy.Signature):
-    """Classify a passage into exactly one of: law, finance, healthcare, ood."""
-    query: str = dspy.InputField()
-    route: Literal["law", "finance", "healthcare", "ood"] = dspy.OutputField()
+    """
+    You are a highly accurate text classifier. Your task is to categorize queries
+    into one of four predefined domains. The ONLY valid categories are: law, finance, healthcare, ood
+    Any query that does not clearly belong to the domains above MUST be categorized as ood. 
+    You must respond with ONLY the category name, and nothing else. No explanations, no extra words.
+    """
+    query: str = dspy.InputField(desc="The query to classify.")
+    route: Literal["law", "finance", "healthcare", "ood"] = dspy.OutputField(desc="The predicted category. If the query does not clearly belong to category - law, finance, healthcare. Predict 'ood'.")
 
 class SafePredict(dspy.Module):
-    def __init__(self):
+    def __init__(self, inner=None):
         super().__init__()
-        self.predict = dspy.Predict(Classify)
+        self.predict = inner if inner is not None else dspy.Predict(Classify)
     def forward(self, **kw):
         try:
-            result = self.predict(**kw)
-            #log.info("SafePredict OK: route=%r", result.route)
-            return result
-        except Exception as e:
-            #log.info("SafePredict FAIL: %s", e)
+            return self.predict(**kw)
+        except Exception:
             return dspy.Prediction(route="ood")
 
 class ScoreWithFeedback(float):
-    """GEPA needs a float that also carries a .feedback string."""
-    def __new__(cls, val, feedback):
-        obj = float.__new__(cls, val)
+    """Acts as a number (float) and as a dict with `score`/`feedback` keys for GEPA."""
+    def __new__(cls, score, feedback):
+        obj = float.__new__(cls, score)
         obj.feedback = feedback
+        obj.score = float(score)
         return obj
+    def __getitem__(self, key):
+        if key == "score": return self.score
+        if key == "feedback": return self.feedback
+        raise KeyError(key)
+    def __setitem__(self, key, value):
+        if key == "score": self.score = float(value)
+        elif key == "feedback": self.feedback = value
+        else: raise KeyError(key)
 
 def dspy_metric(gold, pred, trace=None):
     try:
@@ -113,16 +124,50 @@ def dspy_metric(gold, pred, trace=None):
         #log.info("METRIC gold=%r pred=%r → FAIL: %s", getattr(gold, 'route', None), getattr(pred, 'route', None), e)
         return False
 
+
 def gepa_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
+    ID_ROUTES = ("law", "finance", "healthcare")
+    OOD_ROUTE = "ood"
+    KNOWN_ROUTES = set(ID_ROUTES) | {OOD_ROUTE}
+    gold_r = gold.route
+    pred_r = pred.route
     correct = dspy_metric(gold, pred)
+
+    # Malformed / missing prediction — treat as format failure regardless of gold
+    if pred_r not in KNOWN_ROUTES:
+        fb = (f"Incorrect. The prediction {pred_r!r} is not a valid route. "
+            f"Output exactly one of: law, finance, healthcare, ood. "
+            f"Expected '{gold_r}'.")
+        return ScoreWithFeedback(0.0, fb)
+
+    gold_is_ood = (gold_r == OOD_ROUTE)
+    pred_is_ood = (pred_r == OOD_ROUTE)
+
     if correct:
-        fb = "Correct."
-        log.info("GEPA METRIC gold=%r pred=%r → 1.0 | %s",
-                 getattr(gold, "route", None), getattr(pred, "route", None), fb)
+        if gold_is_ood:
+            fb = "Correct. This query is out-of-domain (OOD)."
+        else:
+            fb = f"Correct. This query is in-domain and belongs to '{gold_r}'."
         return ScoreWithFeedback(1.0, fb)
-    fb = f"Incorrect: predicted '{getattr(pred, 'route', None)}', expected '{gold.route}'."
-    log.info("GEPA METRIC gold=%r pred=%r → 0.0 | %s",
-             getattr(gold, "route", None), getattr(pred, "route", None), fb)
+
+    # Wrong: 3 distinct failure modes
+    if not gold_is_ood and pred_is_ood:
+        # false OOD: gold=ID, pred=ood
+        fb = (f"Incorrect. This query is in-domain and belongs to '{gold_r}', "
+            f"but you predicted 'ood'. Do not reject in-domain queries — "
+            f"recognize the '{gold_r}' domain signal.")
+    elif gold_is_ood and not pred_is_ood:
+        # false ID: gold=ood, pred=ID
+        fb = (f"Incorrect. This query is out-of-domain (OOD) and does not fit "
+            f"any of the in-domain classes (law, finance, healthcare), "
+            f"but you predicted '{pred_r}'. Predict 'ood' when a query "
+            f"does not clearly belong to one of the three in-domain classes.")
+    else:
+        # within-ID confusion: gold=ID, pred=ID, different classes (the missed case)
+        fb = (f"Incorrect. This query is in-domain and belongs to '{gold_r}', "
+            f"but you predicted '{pred_r}'. Distinguish carefully between "
+            f"the in-domain classes: law, finance, healthcare.")
+
     return ScoreWithFeedback(0.0, fb)
 
 def predict_dspy(text, program):
@@ -150,7 +195,8 @@ def load_model(name):
     log.info("Loading %s", name)
     cd = _cache(name)
     tok = AutoTokenizer.from_pretrained(name, trust_remote_code=True, cache_dir=cd)
-    mdl = AutoModelForCausalLM.from_pretrained(name, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True, cache_dir=cd)
+    mdl = AutoModelForCausalLM.from_pretrained(name, dtype=torch.bfloat16, trust_remote_code=True, cache_dir=cd)
+    mdl = mdl.to("cuda:0")
     mdl.eval()
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
@@ -167,7 +213,7 @@ class HFLocalLM(dspy.LM):
         self.cache = False
         self.callbacks = []
         self.history = []
-        self.kwargs = {"temperature": 0.0, "max_tokens": MAX_NEW_TOKENS_DSPY}
+        self.kwargs = {"temperature": 0.0}
         self.num_retries = 0
         self.provider = None
         self.finetuning_model = None
@@ -192,7 +238,7 @@ class HFLocalLM(dspy.LM):
         try:
             with torch.no_grad():
                 out = self._hf_model.generate(
-                    **ids, max_new_tokens=MAX_NEW_TOKENS_DSPY, do_sample=False,
+                    **ids, do_sample=False,
                     pad_token_id=self._hf_tok.pad_token_id)
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
@@ -218,10 +264,10 @@ def make_teacher_lm():
     """Create an API-based LM for GEPA's reflection_lm (teacher)."""
     api_key = os.environ.get("API_KEY")
     api_base = os.environ.get("API_BASE")
-    log.info("TEACHER env API_KEY=%s API_BASE=%s", bool(api_key), api_base)
+    #log.info("TEACHER env API_KEY=%s API_BASE=%s", bool(api_key), api_base)
     if not api_key or not api_base:
         raise RuntimeError("API_KEY and API_BASE env vars are required for GEPA teacher")
-    log.info("TEACHER creating LM model=openai/%s", GEPA_TEACHER_MODEL)
+    #log.info("TEACHER creating LM model=openai/%s", GEPA_TEACHER_MODEL)
     return dspy.LM(
         model=f"openai/{GEPA_TEACHER_MODEL}",
         api_key=api_key,
@@ -276,8 +322,8 @@ DRY_RUN = False  # set via --dry-run flag
 DRY_RUN_N = 5    # samples per split in dry-run mode
 
 def eval_model(name, strategy, score_fn, lats):
-    id_data  = gqr.load_id_test_dataset()
-    ood_data = gqr.load_ood_test_dataset()
+    id_data  = gqr.load_id_test_dataset().sample(n=1000, random_state=GEPA_SEED).copy()
+    ood_data = gqr.load_ood_test_dataset().sample(n=1000, random_state=GEPA_SEED).copy()
     if DRY_RUN:
         id_data  = id_data.head(DRY_RUN_N).copy()
         ood_data = ood_data.head(DRY_RUN_N).copy()
@@ -293,12 +339,9 @@ def eval_model(name, strategy, score_fn, lats):
     id_acc = evaluate(predictions=id_data["pred"], ground_truth=id_data["label"])["accuracy"]
 
     ood_by_ds = evaluate_by_dataset(ood_data, pred_col="pred", true_col="label", dataset_col="dataset")
-    if ood_by_ds.empty:
-        ood_acc = Evaluator.evaluate(predicted_labels=ood_data["pred"], true_labels=ood_data["label"])["accuracy"]
-        ds_acc = {}
-    else:
-        ood_acc = ood_by_ds["accuracy"].mean()
-        ds_acc = dict(zip(ood_by_ds["dataset"], ood_by_ds["accuracy"]))
+
+    ood_acc = ood_by_ds["accuracy"].mean()
+    ds_acc = dict(zip(ood_by_ds["dataset"], ood_by_ds["accuracy"]))
 
     gqr_score = 2*id_acc*ood_acc/(id_acc+ood_acc) if (id_acc+ood_acc) > 0 else 0.0
     avg_lat = sum(lats)/len(lats) if lats else 0.0
@@ -381,7 +424,6 @@ def main():
     results_csv = RESULTS_DIR / "results.csv"
     hyperparameters = json.dumps({
         "max_new_tokens_baseline": MAX_NEW_TOKENS_BASELINE,
-        "max_new_tokens_dspy": MAX_NEW_TOKENS_DSPY,
         "max_input_len": MAX_INPUT_LEN,
         "gepa_train_size": GEPA_TRAIN_SIZE,
         "gepa_val_size": GEPA_VAL_SIZE,
@@ -404,9 +446,9 @@ def main():
     n_gepa_t = DRY_RUN_N if DRY_RUN else GEPA_TRAIN_SIZE
     n_gepa_v = DRY_RUN_N if DRY_RUN else GEPA_VAL_SIZE
     n_fs     = DRY_RUN_N if DRY_RUN else FS_TRAIN_SIZE
-    trainset_gepa  = build_examples(train_data)[:n_gepa_t]
-    valset_gepa    = build_examples(eval_data)[:n_gepa_v]
-    trainset_fs    = build_examples(train_data)[:n_fs]
+    trainset_gepa  = build_examples(train_data.sample(n=n_gepa_t, random_state=GEPA_SEED))#[:n_gepa_t]
+    valset_gepa    = build_examples(eval_data.sample(n=n_gepa_v, random_state=GEPA_SEED))#[:n_gepa_v]
+    trainset_fs    = build_examples(train_data.sample(n=n_fs, random_state=GEPA_SEED))
 
     rows = []
 
@@ -442,38 +484,39 @@ def main():
             dspy_strats = [s for s in ("dspy","gepa","fewshot") if s in STRATEGIES]
             if dspy_strats:
                 lm = make_dspy_lm(name, mdl, tok)
-                dspy.configure(lm=lm)
+                # dspy.configure(lm=lm)
+                with dspy.context(lm=lm):    
+                    if "dspy" in STRATEGIES:
+                        try:
+                            fn, lats = scorer_dspy()
+                            record(eval_model(name, "dspy", fn, lats))
+                        except Exception as e:
+                            _skip("dspy", e)
 
-                if "dspy" in STRATEGIES:
-                    try:
-                        fn, lats = scorer_dspy()
-                        record(eval_model(name, "dspy", fn, lats))
-                    except Exception as e:
-                        _skip("dspy", e)
+                    if "gepa" in STRATEGIES:
+                        try:
+                            teacher_lm = make_teacher_lm()
+                            student = SafePredict()
+                            opt = dspy.GEPA(metric=gepa_metric, reflection_lm=teacher_lm, auto=GEPA_AUTO, seed=GEPA_SEED,
+                                            add_format_failure_as_feedback=True, num_threads=1)
+                            prog = opt.compile(student, trainset=trainset_gepa, valset=valset_gepa)
+                            prog.save(SAVES_DIR / f"gepa_{tag}.json")
+                            fn, lats = scorer_dspy(program=prog)
+                            record(eval_model(name, "gepa", fn, lats))
+                        except Exception as e:
+                            _skip("gepa", e)
 
-                if "gepa" in STRATEGIES:
-                    try:
-                        teacher_lm = make_teacher_lm()
-                        student = SafePredict()
-                        opt = dspy.GEPA(metric=gepa_metric, reflection_lm=teacher_lm, auto=GEPA_AUTO, seed=GEPA_SEED)
-                        prog = opt.compile(student, trainset=trainset_gepa, valset=valset_gepa)
-                        prog.save(SAVES_DIR / f"gepa_{tag}.json")
-                        fn, lats = scorer_dspy(program=prog)
-                        record(eval_model(name, "gepa", fn, lats))
-                    except Exception as e:
-                        _skip("gepa", e)
-
-                if "fewshot" in STRATEGIES:
-                    try:
-                        student = SafePredict()
-                        opt = dspy.BootstrapFewShotWithRandomSearch(
-                            max_labeled_demos=FS_MAX_DEMOS, num_candidate_programs=FS_CANDIDATES, metric=dspy_metric)
-                        prog = opt.compile(student, trainset=trainset_fs)
-                        prog.save(SAVES_DIR / f"fewshot_{tag}.json")
-                        fn, lats = scorer_dspy(program=prog)
-                        record(eval_model(name, "fewshot", fn, lats))
-                    except Exception as e:
-                        _skip("fewshot", e)
+                    if "fewshot" in STRATEGIES:
+                        try:
+                            student = SafePredict()
+                            opt = dspy.BootstrapFewShotWithRandomSearch(
+                                max_labeled_demos=FS_MAX_DEMOS, num_candidate_programs=FS_CANDIDATES, metric=dspy_metric)
+                            prog = opt.compile(student, trainset=trainset_fs)
+                            prog.save(SAVES_DIR / f"fewshot_{tag}.json")
+                            fn, lats = scorer_dspy(program=prog)
+                            record(eval_model(name, "fewshot", fn, lats))
+                        except Exception as e:
+                            _skip("fewshot", e)
         finally:
             if lm is not None:
                 lm._hf_model = None

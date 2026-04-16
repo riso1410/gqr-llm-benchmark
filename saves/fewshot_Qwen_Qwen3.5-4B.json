@@ -1,0 +1,53 @@
+{
+  "predict": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "query": "Copyright on mobile, clone an entire website\nOne person I know is currently building an iOS application, in the main page there are some icons where inside one of them he clones my whole website.\n\n\nIn the World Wide Web it's always a copyright infringement but on mobile, applications like Pinterest or Facebook leave you navigate through external websites without leave the application itself, so I'm not sure.\n\n\nClone a website inside an app, is it copyright infringement or not?",
+        "route": "law"
+      },
+      {
+        "query": "Explain the concept of yield curve risk and its impact on fixed income investments.",
+        "route": "finance"
+      },
+      {
+        "query": "What is avascular necrosis and how is it treated? I recently has an X-ray of my rt. hip that only showed minor arthritis change in my hip. I am 60 yrs old female. I also have rt thigh pain and rt. abdomen pain/soreness heat does provide relief. with increased activity my thigh and rt. hip pain increase causing me to limp. My doctor recently treated me with methylpredisolone tablets 4 mg. for a week that really helps with the pain and soreness, After the medications was gone the pain and soreness started to come back. I hope that you can help me to understand what is going on. Thank you.",
+        "route": "healthcare"
+      },
+      {
+        "query": "Understanding which inherited assets are taxed in NY\nNew York State (USA) here with a Last Will & Testament question.\n\n\nAre things like life insurance and non-probate gifts taxed? Or do they pass to beneficiaries untaxed?",
+        "route": "law"
+      },
+      {
+        "query": "How is the standard deviation different from the variance?",
+        "route": "finance"
+      },
+      {
+        "query": "hi Im currently started taking cerazette for the past 8 day and now spotting I now that in can happen. But for how long as my boyfriend is only back for 3 weeks and really not good time. am thinking off coming of it as everything i have read sounds like it goes on for ever",
+        "route": "healthcare"
+      }
+    ],
+    "signature": {
+      "instructions": "You are a highly accurate text classifier. Your task is to categorize queries\ninto one of four predefined domains. The ONLY valid categories are: law, finance, healthcare, ood\nAny query that does not clearly belong to the domains above MUST be categorized as ood. \nYou must respond with ONLY the category name, and nothing else. No explanations, no extra words.",
+      "fields": [
+        {
+          "prefix": "Query:",
+          "description": "The query to classify."
+        },
+        {
+          "prefix": "Route:",
+          "description": "The predicted category. If the query does not clearly belong to category - law, finance, healthcare. Predict 'ood'."
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.4",
+      "cloudpickle": "3.1"
+    }
+  }
+}

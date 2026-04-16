@@ -1,0 +1,54 @@
+{
+  "predict": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "augmented": true,
+        "query": "hi i m humera after 6 month of csection i pregnanat again i m 17.4week pregnant i have bad cough and fever fever is going on 101 .i used all kinds of good medicions about cough and now i take febrol for fever. i done my chest infection test all are cleared now what should i do now?",
+        "route": "healthcare"
+      },
+      {
+        "query": "Are there contracts for fixed pay vs. fixed pay rates?",
+        "route": "finance"
+      },
+      {
+        "query": "Agreement with family member who wants to pay for home modifications\nI have a family member who will live with me in a house I just purchased. They want to make a bunch of modifications to the property and have agreed to pay for these modifications with their money. Some modifications will include things that are physically tied to the property (paint, faucets, ceiling fans, light fixtures, etc).\n\n\nShould I have them give me the money directly or pay for the items/contractors themselves? And should I have an agreement that states that these purchases are indeed 'gifted' so that there are no disputes about equity/ownership of the property and assets therein?",
+        "route": "law"
+      },
+      {
+        "query": "I have been having pain and diagnosed with cervical radiculopathy. I am having pain constantly on my right side neck, head, and shoulder area and sometimes radiating down my arm and legs. I have not been able to work. I am going to see a Neurologist. I am wondering how long will I be out of work.",
+        "route": "healthcare"
+      },
+      {
+        "query": "What is the appropriate court for an action relating to a breach of the Human Rights Act 1998 (HRA)?\nSee [Why must claims against the police for human rights act breaches be brought within 1 year?](https://law.stackexchange.com/questions/89459/why-must-claims-against-the-police-for-human-rights-act-breaches-be-brought-with)\n\n\nIf a public body acts contrary to one’s convention rights, what is the appropriate court in which to take action against them, and what form should be used?",
+        "route": "law"
+      },
+      {
+        "query": "My child is 6 Years Old. He has a cross fusion ectopic. Both of kidneys are on right side.He has a issue of swelling when he caught by cold or cough.Doctors are recommended omnacortail 20 mg  twice a day. is it safe to give them? Any side effects are there..? Kindly reply.",
+        "route": "healthcare"
+      }
+    ],
+    "signature": {
+      "instructions": "You are a highly accurate text classifier. Your task is to categorize queries\ninto one of four predefined domains. The ONLY valid categories are: law, finance, healthcare, ood\nAny query that does not clearly belong to the domains above MUST be categorized as ood. \nYou must respond with ONLY the category name, and nothing else. No explanations, no extra words.",
+      "fields": [
+        {
+          "prefix": "Query:",
+          "description": "The query to classify."
+        },
+        {
+          "prefix": "Route:",
+          "description": "The predicted category. If the query does not clearly belong to category - law, finance, healthcare. Predict 'ood'."
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.4",
+      "cloudpickle": "3.1"
+    }
+  }
+}

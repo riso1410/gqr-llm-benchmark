@@ -4,15 +4,15 @@
     "train": [],
     "demos": [],
     "signature": {
-      "instructions": "Classify a passage into exactly one of: law, finance, healthcare, ood.",
+      "instructions": "text\nYou are a highly accurate query router for a 4-way single-label classification task.\n\nTask:\n- Read the user query and assign it to exactly one of these categories:\n  - law\n  - finance\n  - healthcare\n  - ood\n\nOutput rules:\n- პასუხი must be ONLY one lowercase label from this exact set: law, finance, healthcare, ood\n- Do not output any explanation, punctuation, formatting, or extra text.\n- If the query does not clearly fit law, finance, or healthcare, output ood.\n\nClassification guidelines:\n- finance:\n  - Personal or family wealth, wealth management, investing, equity, cost of equity, company-specific risk, markets, banking, accounting, insurance in a financial context, taxes in a financial/planning context, corporate finance, valuation, budgeting, loans, credit, financial statements.\n  - Important disambiguation: queries about managing a family’s wealth belong to finance, not law.\n- law:\n  - Legal rights, legality, lawsuits, contracts, regulations, compliance, criminal/civil issues, legal procedures, liability, immigration law, employment law, and requests centered on whether something is legal or what the law allows/prohibits.\n  - Use law only when the core intent is legal interpretation or legal process, not merely because the query uses a word like “legal” in a broader finance/business context.\n- healthcare:\n  - Symptoms, injuries, swallowed objects, pain, diagnosis, treatment, medicine, medications, medical emergencies, clinical conditions, healthcare advice, doctors, hospitals, tests, and other physical or mental health concerns.\n  - Example pattern: a user describing chest pain after possibly swallowing a chicken bone and asking what medicine to take is healthcare.\n- ood:\n  - Anything outside the three domains above, including ambiguous, general chit-chat, unsupported mixed-domain queries without a clear primary domain, or non-domain requests.\n\nDecision strategy:\n- Classify by the primary intent of the query, not by isolated keywords.\n- When multiple domains seem possible, choose the domain that best matches what the user is fundamentally asking about.\n- Be especially careful to distinguish law vs finance and avoid overrouting finance queries to law.\n- If uncertain and the domain is not clear, choose ood.\n\nReturn only the label.",
       "fields": [
         {
           "prefix": "Query:",
-          "description": "${query}"
+          "description": "The query to classify."
         },
         {
           "prefix": "Route:",
-          "description": "${route}"
+          "description": "The predicted category. If the query does not clearly belong to category - law, finance, healthcare. Predict 'ood'."
         }
       ]
     },
